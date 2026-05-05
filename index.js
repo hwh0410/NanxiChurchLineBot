@@ -79,6 +79,17 @@ async function handleTextMessage(text) {
     return [makeSongResourceFlex(songs[0])];
   }
 
+  if (text.includes("歷年影片") || text.includes("演唱影片")) {
+    const videos = await getArchiveVideos();
+    return [makeArchiveVideosFlex(videos, "歷年演唱影片")];
+  }
+
+  if (text.startsWith("查影片")) {
+    const keyword = text.replace("查影片", "").trim();
+    const videos = await searchArchiveVideos(keyword);
+    return [makeArchiveVideosFlex(videos, `影片查詢：${keyword}`)];
+  }
+
   if (text.includes("平台") || text.includes("網址")) {
     return [
       makeText(`楠西教會聖歌隊練習平台：\n${PLATFORM_URL}`),
@@ -105,6 +116,8 @@ function makeHelpMessage() {
       "・下週行程\n" +
       "・查 曲名\n" +
       "・練習資源 曲名\n" +
+      "・歷年影片\n" +
+      "・查影片 關鍵字\n" +
       "・平台",
     quickReply: makeQuickReply(),
   };
@@ -143,6 +156,14 @@ function makeQuickReply() {
           type: "message",
           label: "練習資源",
           text: "練習資源 ",
+        },
+      },
+      {
+        type: "action",
+        action: {
+          type: "message",
+          label: "歷年影片",
+          text: "歷年影片",
         },
       },
       {
@@ -606,6 +627,102 @@ function makeSongResourceFlex(song) {
           },
         ],
       },
+    },
+    quickReply: makeQuickReply(),
+  };
+}
+
+async function getArchiveVideos() {
+  const response = await axios.get(
+    `${SUPABASE_URL}/rest/v1/archive_videos?select=*&order=date.desc&limit=10`,
+    { headers }
+  );
+
+  return response.data || [];
+}
+
+async function searchArchiveVideos(keyword) {
+  if (!keyword) return [];
+
+  const response = await axios.get(
+    `${SUPABASE_URL}/rest/v1/archive_videos?select=*&title=ilike.*${encodeURIComponent(
+      keyword
+    )}*&order=date.desc&limit=10`,
+    { headers }
+  );
+
+  return response.data || [];
+}
+
+function makeArchiveVideosFlex(videos, title) {
+  if (!videos.length) {
+    return makeText(`目前找不到「${title}」相關影片。`);
+  }
+
+  return {
+    type: "flex",
+    altText: title,
+    contents: {
+      type: "carousel",
+      contents: videos.slice(0, 10).map((video) => ({
+        type: "bubble",
+        size: "micro",
+        body: {
+          type: "box",
+          layout: "vertical",
+          spacing: "sm",
+          contents: [
+            {
+              type: "text",
+              text: video.title,
+              weight: "bold",
+              size: "md",
+              wrap: true,
+            },
+            {
+              type: "text",
+              text: `${video.date || "未填日期"}｜${
+                video.event_name || "未填場合"
+              }`,
+              size: "xs",
+              color: "#64748b",
+              wrap: true,
+            },
+            {
+              type: "text",
+              text: video.description || " ",
+              size: "xs",
+              color: "#64748b",
+              wrap: true,
+            },
+          ],
+        },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          spacing: "sm",
+          contents: [
+            {
+              type: "button",
+              style: "primary",
+              action: {
+                type: "uri",
+                label: "觀看影片",
+                uri: video.youtube_url,
+              },
+            },
+            {
+              type: "button",
+              style: "link",
+              action: {
+                type: "uri",
+                label: "開啟平台",
+                uri: PLATFORM_URL,
+              },
+            },
+          ],
+        },
+      })),
     },
     quickReply: makeQuickReply(),
   };

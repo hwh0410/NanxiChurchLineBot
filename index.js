@@ -32,16 +32,28 @@ const headers = {
 
 app.use("/api", express.json({ limit: "5mb" }));
 
-const allowedOrigins = [
-  "https://hwh0410.github.io",
-  "http://localhost:5173",
-  "http://localhost:5174",
-];
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+
+  if (origin === "https://hwh0410.github.io") {
+    return true;
+  }
+
+  if (/^http:\/\/localhost:\d+$/.test(origin)) {
+    return true;
+  }
+
+  if (/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) {
+    return true;
+  }
+
+  return false;
+}
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  if (!origin || allowedOrigins.includes(origin)) {
+  if (isAllowedOrigin(origin)) {
     if (origin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
     }

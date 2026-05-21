@@ -19,6 +19,52 @@ const SHEET_NAMES = [
   "archive_videos",
 ];
 
+const TABLE_COLUMNS = {
+  schedules: [
+    "id",
+    "date",
+    "title",
+    "service_type",
+    "note",
+    "created_at",
+  ],
+  schedule_songs: [
+    "id",
+    "schedule_id",
+    "song_id",
+    "usage_type",
+    "sort_order",
+    "created_at",
+  ],
+  songs: [
+    "id",
+    "title",
+    "song_key",
+    "tempo",
+    "note",
+    "created_at",
+  ],
+  song_resources: [
+    "id",
+    "song_id",
+    "type",
+    "voice_part",
+    "title",
+    "url",
+    "created_at",
+  ],
+  archive_videos: [
+    "id",
+    "title",
+    "date",
+    "event_name",
+    "youtube_url",
+    "description",
+    "tags",
+    "created_at",
+  ],
+};
+
 let cachedData = null;
 let cachedAt = null;
 
@@ -193,9 +239,164 @@ function getCacheInfo() {
   };
 }
 
+function appDataToTables(data) {
+  const now = new Date().toISOString();
+
+  const songs = (data.songs || []).map((song) => ({
+    id: song.id,
+    title: song.title,
+    song_key: song.key || song.song_key || "",
+    tempo: song.tempo || "",
+    note: song.note || "",
+    created_at: song.created_at || now,
+  }));
+
+  const songResources = (data.songs || []).flatMap((song) =>
+    (song.resources || []).map((resource) => ({
+      id: resource.id,
+      song_id: song.id,
+      type: resource.type || "link",
+      voice_part: resource.voicePart || resource.voice_part || "全體",
+      title: resource.title,
+      url: resource.url,
+      created_at: resource.created_at || now,
+    }))
+  );
+
+  const schedules = (data.schedules || []).map((schedule) => ({
+    id: schedule.id,
+    date: schedule.date,
+    title: schedule.title,
+    service_type: schedule.serviceType || schedule.service_type || "主日",
+    note: schedule.note || "",
+    created_at: schedule.created_at || now,
+  }));
+
+  const scheduleSongs = (data.schedules || []).flatMap((schedule) =>
+    (schedule.songs || []).map((song, index) => ({
+      id: `${schedule.id}-${song.id}-${index}`,
+      schedule_id: schedule.id,
+      song_id: song.id,
+      usage_type: song.usageType || song.usage_type || "獻詩",
+      sort_order: index,
+      created_at: song.created_at || now,
+    }))
+  );
+
+  const archiveVideos = (data.archiveVideos || data.archive_videos || []).map(
+    (video) => ({
+      id: video.id,
+      title: video.title,
+      date: video.date || "",
+      event_name: video.eventName || video.event_name || "",
+      youtube_url: video.youtubeUrl || video.youtube_url || "",
+      description: video.description || "",
+      tags: video.tags || "",
+      created_at: video.created_at || now,
+    })
+  );
+
+  return {
+    schedules,
+    schedule_songs: scheduleSongs,
+    songs,
+    song_resources: songResources,
+    archive_videos: archiveVideos,
+  };
+}
+
+function tableToValues(tableName, rows) {
+  const columns = TABLE_COLUMNS[tableName];
+
+  return [
+    columns,
+    ...rows.map((row) => columns.map((column) => row[column] ?? "")),
+  ];
+}
+
+async function writeTable(sheets, tableName, rows) {
+  const values = tableToValues(tableName, rows);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SHEET_ID,
+    range: `${tableName}!A:Z`,
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${tableName}!A1`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values,
+    },
+  });
+}
+
+async function saveAppDataToSheet(data) {
+  const sheets = await getSheetsClient();
+  const tables = appDataToTables(data);
+
+  for (const tableName of SHEET_NAMES) {
+    await writeTable(sheets, tableName, tables[tableName] || []);
+  }
+
+  return refreshCache();
+}
+
+function normalizedToAppData(normalized) {
+  return {
+    schedules: (normalized.schedules || []).map((schedule) => {
+      const joined = normalized.schedulesWithSongs.find(
+        (item) => item.id === schedule.id
+      );
+
+      return {
+        id: schedule.id,
+        date: schedule.date,
+        title: schedule.title,
+        serviceType: schedule.service_type || "主日",
+        note: schedule.note || "",
+        songs: (joined?.songs || []).map((item) => ({
+          id: item.song.id,
+          title: item.song.title,
+          usageType: item.usageType || "獻詩",
+        })),
+      };
+    }),
+    songs: (normalized.songs || []).map((song) => ({
+      id: song.id,
+      title: song.title,
+      key: song.song_key || "",
+      tempo: song.tempo || "",
+      note: song.note || "",
+      resources: (normalized.resourcesBySongId.get(song.id) || []).map(
+        (resource) => ({
+          id: resource.id,
+          songId: resource.song_id,
+          type: resource.type,
+          voicePart: resource.voice_part || "全體",
+          title: resource.title,
+          url: resource.url,
+        })
+      ),
+    })),
+    archiveVideos: (normalized.archiveVideos || []).map((video) => ({
+      id: video.id,
+      title: video.title,
+      date: video.date || "",
+      eventName: video.event_name || "",
+      youtubeUrl: video.youtube_url || "",
+      description: video.description || "",
+      tags: video.tags || "",
+    })),
+  };
+}
+
 module.exports = {
   loadAllDataFromSheet,
   getCachedData,
   refreshCache,
   getCacheInfo,
+  saveAppDataToSheet,
+  normalizedToAppData,
 };

@@ -5,6 +5,8 @@ const {
   getCachedData,
   refreshCache,
   getCacheInfo,
+  saveAppDataToSheet,
+  normalizedToAppData,
 } = require("./services/googleSheetStore");
 
 const app = express();
@@ -27,6 +29,8 @@ const headers = {
   apikey: SUPABASE_ANON_KEY,
   Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
 };
+
+app.use("/api", express.json({ limit: "5mb" }));
 
 app.get("/", (req, res) => {
   res.send("Nanxi LINE bot is running");
@@ -65,6 +69,64 @@ app.post("/refresh-cache", async (req, res) => {
     });
   } catch (error) {
     console.error("Refresh cache error:", error);
+    res.status(500).json({
+      status: "error",
+      message: error.message,
+    });
+  }
+});
+
+
+app.get("/api/data", async (req, res) => {
+  try {
+    const data = await getCachedData();
+    const appData = normalizedToAppData(data);
+
+    res.status(200).json({
+      status: "ok",
+      cache: getCacheInfo(),
+      data: appData,
+    });
+  } catch (error) {
+    console.error("GET /api/data error:", error);
+    res.status(500).json({
+      status: "error",
+      message: error.message,
+    });
+  }
+});
+
+app.post("/api/data", async (req, res) => {
+  try {
+    if (!requireAdminApiToken(req, res)) {
+      return;
+    }
+
+    if (!req.body || typeof req.body !== "object") {
+      res.status(400).json({
+        status: "error",
+        message: "Invalid request body.",
+      });
+      return;
+    }
+
+    const savedData = await saveAppDataToSheet(req.body);
+    const appData = normalizedToAppData(savedData);
+
+    res.status(200).json({
+      status: "ok",
+      cache: getCacheInfo(),
+      counts: {
+        schedules: savedData.schedules.length,
+        scheduleSongs: savedData.scheduleSongs.length,
+        songs: savedData.songs.length,
+        songResources: savedData.songResources.length,
+        archiveVideos: savedData.archiveVideos.length,
+      },
+      data: appData,
+    });
+  } catch (error) {
+    console.error("POST /api/data error:", error);
     res.status(500).json({
       status: "error",
       message: error.message,
@@ -142,6 +204,33 @@ async function handleTextMessage(text) {
   }
 
   return [makeHelpMessage()];
+}
+
+
+function requireAdminApiToken(req, res) {
+  const expectedToken = process.env.ADMIN_API_TOKEN || "";
+
+  if (!expectedToken) {
+    res.status(500).json({
+      status: "error",
+      message: "ADMIN_API_TOKEN is not configured on server.",
+    });
+    return false;
+  }
+
+  const providedToken =
+    req.headers["x-admin-token"] ||
+    req.headers["authorization"]?.replace(/^Bearer\s+/i, "");
+
+  if (providedToken !== expectedToken) {
+    res.status(401).json({
+      status: "error",
+      message: "Unauthorized.",
+    });
+    return false;
+  }
+
+  return true;
 }
 
 function makeText(text) {

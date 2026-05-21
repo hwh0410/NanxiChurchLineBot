@@ -32,6 +32,40 @@ const headers = {
 
 app.use("/api", express.json({ limit: "5mb" }));
 
+const allowedOrigins = [
+  "https://hwh0410.github.io",
+  "http://localhost:5173",
+  "http://localhost:5174",
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (!origin || allowedOrigins.includes(origin)) {
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
+
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, x-admin-token"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS"
+    );
+  }
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
+
+
 app.get("/", (req, res) => {
   res.send("Nanxi LINE bot is running");
 });

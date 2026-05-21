@@ -8,6 +8,7 @@
   "dependencies": {
     "@line/bot-sdk": "^10.0.0",
     "axios": "^1.0.0",
-    "express": "^5.0.0"
+    "express": "^5.0.0",
+    "googleapis": "^172.0.0"
   }
 }

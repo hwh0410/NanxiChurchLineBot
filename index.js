@@ -1,6 +1,11 @@
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
+const {
+  getCachedData,
+  refreshCache,
+  getCacheInfo,
+} = require("./services/googleSheetStore");
 
 const app = express();
 
@@ -33,6 +38,38 @@ app.get("/health", (req, res) => {
     service: "nanxi-line-bot",
     time: new Date().toISOString(),
   });
+});
+
+app.get("/cache-info", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    cache: getCacheInfo(),
+    time: new Date().toISOString(),
+  });
+});
+
+app.post("/refresh-cache", async (req, res) => {
+  try {
+    const data = await refreshCache();
+
+    res.status(200).json({
+      status: "ok",
+      cache: getCacheInfo(),
+      counts: {
+        schedules: data.schedules.length,
+        scheduleSongs: data.scheduleSongs.length,
+        songs: data.songs.length,
+        songResources: data.songResources.length,
+        archiveVideos: data.archiveVideos.length,
+      },
+    });
+  } catch (error) {
+    console.error("Refresh cache error:", error);
+    res.status(500).json({
+      status: "error",
+      message: error.message,
+    });
+  }
 });
 
 app.post("/webhook", line.middleware(config), async (req, res) => {
@@ -186,7 +223,103 @@ function makeQuickReply() {
   };
 }
 
+
 async function getScheduleByOffset(offsetWeeks) {
+  try {
+    const data = await getCachedData();
+    const today = new Date();
+    const start = new Date(today);
+
+    start.setDate(today.getDate() + offsetWeeks * 7);
+
+    const startDate = start.toISOString().slice(0, 10);
+
+    const schedule = data.schedulesWithSongs.find(
+      (item) => String(item.date || "") >= startDate
+    );
+
+    return schedule || null;
+  } catch (error) {
+    console.error("Google Sheet getScheduleByOffset failed, fallback to Supabase:", error.message);
+    return getScheduleByOffsetFromSupabase(offsetWeeks);
+  }
+}
+
+async function getSongById(songId) {
+  try {
+    const data = await getCachedData();
+    return data.songsById.get(songId) || null;
+  } catch (error) {
+    console.error("Google Sheet getSongById failed, fallback to Supabase:", error.message);
+    return getSongByIdFromSupabase(songId);
+  }
+}
+
+async function getResourcesBySongId(songId) {
+  try {
+    const data = await getCachedData();
+    return data.resourcesBySongId.get(songId) || [];
+  } catch (error) {
+    console.error("Google Sheet getResourcesBySongId failed, fallback to Supabase:", error.message);
+    return getResourcesBySongIdFromSupabase(songId);
+  }
+}
+
+async function searchSongs(keyword) {
+  try {
+    if (!keyword) return [];
+
+    const data = await getCachedData();
+    const normalizedKeyword = keyword.toLowerCase();
+
+    return data.songs
+      .filter((song) => String(song.title || "").toLowerCase().includes(normalizedKeyword))
+      .slice(0, 5)
+      .map((song) => ({
+        ...song,
+        resources: data.resourcesBySongId.get(song.id) || [],
+      }));
+  } catch (error) {
+    console.error("Google Sheet searchSongs failed, fallback to Supabase:", error.message);
+    return searchSongsFromSupabase(keyword);
+  }
+}
+
+async function getArchiveVideos() {
+  try {
+    const data = await getCachedData();
+
+    return [...data.archiveVideos]
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 10);
+  } catch (error) {
+    console.error("Google Sheet getArchiveVideos failed, fallback to Supabase:", error.message);
+    return getArchiveVideosFromSupabase();
+  }
+}
+
+async function searchArchiveVideos(keyword) {
+  try {
+    if (!keyword) return [];
+
+    const data = await getCachedData();
+    const normalizedKeyword = keyword.toLowerCase();
+
+    return data.archiveVideos
+      .filter((video) =>
+        String(video.title || "").toLowerCase().includes(normalizedKeyword) ||
+        String(video.description || "").toLowerCase().includes(normalizedKeyword) ||
+        String(video.tags || "").toLowerCase().includes(normalizedKeyword)
+      )
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 10);
+  } catch (error) {
+    console.error("Google Sheet searchArchiveVideos failed, fallback to Supabase:", error.message);
+    return searchArchiveVideosFromSupabase(keyword);
+  }
+}
+
+async function getScheduleByOffsetFromSupabase(offsetWeeks) {
   const today = new Date();
   const start = new Date(today);
   start.setDate(today.getDate() + offsetWeeks * 7);
@@ -214,10 +347,10 @@ async function getScheduleByOffset(offsetWeeks) {
   const songsWithResources = [];
 
   for (const item of scheduleSongs) {
-    const song = await getSongById(item.song_id);
+    const song = await getSongByIdFromSupabase(item.song_id);
 
     if (song) {
-      const resources = await getResourcesBySongId(song.id);
+      const resources = await getResourcesBySongIdFromSupabase(song.id);
       songsWithResources.push({
         usageType: item.usage_type || "曲目",
         song,
@@ -232,7 +365,7 @@ async function getScheduleByOffset(offsetWeeks) {
   };
 }
 
-async function getSongById(songId) {
+async function getSongByIdFromSupabase(songId) {
   const response = await axios.get(
     `${SUPABASE_URL}/rest/v1/songs?select=*&id=eq.${songId}&limit=1`,
     { headers }
@@ -241,7 +374,7 @@ async function getSongById(songId) {
   return (response.data || [])[0] || null;
 }
 
-async function getResourcesBySongId(songId) {
+async function getResourcesBySongIdFromSupabase(songId) {
   const response = await axios.get(
     `${SUPABASE_URL}/rest/v1/song_resources?select=*&song_id=eq.${songId}&order=created_at.asc`,
     { headers }
@@ -250,7 +383,7 @@ async function getResourcesBySongId(songId) {
   return response.data || [];
 }
 
-async function searchSongs(keyword) {
+async function searchSongsFromSupabase(keyword) {
   if (!keyword) return [];
 
   const response = await axios.get(
@@ -263,7 +396,7 @@ async function searchSongs(keyword) {
   const result = [];
 
   for (const song of songs) {
-    const resources = await getResourcesBySongId(song.id);
+    const resources = await getResourcesBySongIdFromSupabase(song.id);
     result.push({
       ...song,
       resources,
@@ -640,7 +773,7 @@ function makeSongResourceFlex(song) {
   };
 }
 
-async function getArchiveVideos() {
+async function getArchiveVideosFromSupabase() {
   const response = await axios.get(
     `${SUPABASE_URL}/rest/v1/archive_videos?select=*&order=date.desc&limit=10`,
     { headers }
@@ -649,7 +782,7 @@ async function getArchiveVideos() {
   return response.data || [];
 }
 
-async function searchArchiveVideos(keyword) {
+async function searchArchiveVideosFromSupabase(keyword) {
   if (!keyword) return [];
 
   const response = await axios.get(
@@ -740,4 +873,13 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`Bot running on ${PORT}`);
+
+  refreshCache()
+    .then(() => {
+      console.log("Google Sheet cache loaded on startup", getCacheInfo());
+    })
+    .catch((error) => {
+      console.error("Google Sheet cache load failed on startup:", error.message);
+      console.error("Bot will fallback to Supabase when needed.");
+    });
 });

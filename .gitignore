@@ -5,3 +5,6 @@ index.backup*.js
 .env.local
 backups/
 google-sheet-import/
+.secrets/
+index.before-google-sheet*.js
+services/*.backup*.js

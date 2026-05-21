@@ -98,7 +98,7 @@ app.get("/api/data", async (req, res) => {
 
 app.post("/api/data", async (req, res) => {
   try {
-    if (!requireAdminApiToken(req, res)) {
+    if (!(await requireAdminApiToken(req, res))) {
       return;
     }
 
@@ -207,30 +207,51 @@ async function handleTextMessage(text) {
 }
 
 
-function requireAdminApiToken(req, res) {
+async function requireAdminApiToken(req, res) {
   const expectedToken = process.env.ADMIN_API_TOKEN || "";
+  const adminEmails = (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 
-  if (!expectedToken) {
-    res.status(500).json({
-      status: "error",
-      message: "ADMIN_API_TOKEN is not configured on server.",
-    });
-    return false;
+  const xAdminToken = req.headers["x-admin-token"];
+  const authHeader = req.headers["authorization"] || "";
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "");
+
+  if (expectedToken && xAdminToken === expectedToken) {
+    return true;
   }
 
-  const providedToken =
-    req.headers["x-admin-token"] ||
-    req.headers["authorization"]?.replace(/^Bearer\s+/i, "");
+  if (bearerToken) {
+    try {
+      const response = await axios.get(`${SUPABASE_URL}/auth/v1/user`, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${bearerToken}`,
+        },
+      });
 
-  if (providedToken !== expectedToken) {
-    res.status(401).json({
-      status: "error",
-      message: "Unauthorized.",
-    });
-    return false;
+      const email = String(response.data?.email || "").toLowerCase();
+
+      if (!adminEmails.length || adminEmails.includes(email)) {
+        return true;
+      }
+
+      res.status(403).json({
+        status: "error",
+        message: "Forbidden: this account is not in ADMIN_EMAILS.",
+      });
+      return false;
+    } catch (error) {
+      console.error("Supabase auth verification failed:", error.response?.data || error.message);
+    }
   }
 
-  return true;
+  res.status(401).json({
+    status: "error",
+    message: "Unauthorized.",
+  });
+  return false;
 }
 
 function makeText(text) {

@@ -27,6 +27,14 @@ app.get("/", (req, res) => {
   res.send("Nanxi LINE bot is running");
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "nanxi-line-bot",
+    time: new Date().toISOString(),
+  });
+});
+
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
     const events = req.body.events || [];

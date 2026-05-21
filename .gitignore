@@ -3,3 +3,5 @@ node_modules/
 index.backup*.js
 .env
 .env.local
+backups/
+google-sheet-import/

@@ -219,14 +219,38 @@ async function handleTextMessage(text) {
     return [makeScheduleFlex(schedule, "本週行程")];
   }
 
+  if (text.startsWith("曲目清單")) {
+    const page = parsePageNumber(text.replace("曲目清單", "").trim());
+    const songs = await getAllSongs();
+    return [makeSongListFlex({ songs, title: "請選擇要查詢的曲目", mode: "search", page })];
+  }
+
+  if (text.startsWith("資源清單")) {
+    const page = parsePageNumber(text.replace("資源清單", "").trim());
+    const songs = await getAllSongs();
+    return [makeSongListFlex({ songs, title: "請選擇要查看練習資源的曲目", mode: "resource", page })];
+  }
+
   if (text.startsWith("查")) {
     const keyword = text.replace("查", "").trim();
+
+    if (!keyword) {
+      const songs = await getAllSongs();
+      return [makeSongListFlex({ songs, title: "請選擇要查詢的曲目", mode: "search", page: 1 })];
+    }
+
     const songs = await searchSongs(keyword);
     return [makeSongSearchFlex(keyword, songs)];
   }
 
   if (text.startsWith("練習資源")) {
     const keyword = text.replace("練習資源", "").trim();
+
+    if (!keyword) {
+      const songs = await getAllSongs();
+      return [makeSongListFlex({ songs, title: "請選擇要查看練習資源的曲目", mode: "resource", page: 1 })];
+    }
+
     const songs = await searchSongs(keyword);
     if (!songs.length) return [makeText(`找不到「${keyword}」的曲目。`)];
     return [makeSongResourceFlex(songs[0])];
@@ -377,6 +401,52 @@ function makeQuickReply() {
       },
     ],
   };
+}
+
+function parsePageNumber(value) {
+  const page = Number(value || 1);
+
+  if (!Number.isFinite(page) || page < 1) {
+    return 1;
+  }
+
+  return Math.floor(page);
+}
+
+async function getAllSongs() {
+  try {
+    const data = await getCachedData();
+
+    return [...data.songs]
+      .sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "zh-Hant"))
+      .map((song) => ({
+        ...song,
+        resources: data.resourcesBySongId.get(song.id) || [],
+      }));
+  } catch (error) {
+    console.error("Google Sheet getAllSongs failed, fallback to Supabase:", error.message);
+    return getAllSongsFromSupabase();
+  }
+}
+
+async function getAllSongsFromSupabase() {
+  const response = await axios.get(
+    `${SUPABASE_URL}/rest/v1/songs?select=*&order=created_at.desc`,
+    { headers }
+  );
+
+  const songs = response.data || [];
+  const result = [];
+
+  for (const song of songs) {
+    const resources = await getResourcesBySongIdFromSupabase(song.id);
+    result.push({
+      ...song,
+      resources,
+    });
+  }
+
+  return result;
 }
 
 
@@ -730,6 +800,179 @@ function makeScheduleFlex(schedule, title) {
           },
         ],
       },
+    },
+    quickReply: makeQuickReply(),
+  };
+}
+
+
+function makeSongListFlex({ songs, title, mode = "search", page = 1 }) {
+  const pageSize = 8;
+  const safePage = Math.max(1, Number(page) || 1);
+  const totalPages = Math.max(1, Math.ceil((songs || []).length / pageSize));
+  const currentPage = Math.min(safePage, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageSongs = (songs || []).slice(startIndex, startIndex + pageSize);
+
+  if (!songs || songs.length === 0) {
+    return makeText("目前曲目資料庫尚未建立曲目。");
+  }
+
+  const bubbles = pageSongs.map((song, index) => {
+    const resources = song.resources || [];
+    const displayIndex = startIndex + index + 1;
+
+    const primaryActionText =
+      mode === "resource"
+        ? `練習資源 ${song.title}`
+        : `查 ${song.title}`;
+
+    const primaryLabel =
+      mode === "resource"
+        ? "查看練習資源"
+        : "查看曲目";
+
+    const buttons = [
+      {
+        type: "button",
+        style: "primary",
+        height: "sm",
+        action: {
+          type: "message",
+          label: primaryLabel,
+          text: primaryActionText,
+        },
+      },
+    ];
+
+    if (mode === "search") {
+      buttons.push({
+        type: "button",
+        style: "secondary",
+        height: "sm",
+        action: {
+          type: "message",
+          label: "練習資源",
+          text: `練習資源 ${song.title}`,
+        },
+      });
+    }
+
+    return {
+      type: "bubble",
+      size: "micro",
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: [
+          {
+            type: "text",
+            text: `${displayIndex}. ${song.title}`,
+            weight: "bold",
+            size: "md",
+            wrap: true,
+          },
+          {
+            type: "text",
+            text: `調性：${song.song_key || song.key || "-"}｜速度：${song.tempo || "-"}`,
+            size: "xs",
+            color: "#64748b",
+            wrap: true,
+          },
+          {
+            type: "text",
+            text: `資源數：${resources.length}`,
+            size: "xs",
+            color: "#64748b",
+          },
+        ],
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: buttons,
+      },
+    };
+  });
+
+  if (totalPages > 1) {
+    const previousPage = Math.max(1, currentPage - 1);
+    const nextPage = Math.min(totalPages, currentPage + 1);
+    const listCommand = mode === "resource" ? "資源清單" : "曲目清單";
+
+    const navButtons = [];
+
+    if (currentPage > 1) {
+      navButtons.push({
+        type: "button",
+        style: "secondary",
+        action: {
+          type: "message",
+          label: "上一頁",
+          text: `${listCommand} ${previousPage}`,
+        },
+      });
+    }
+
+    if (currentPage < totalPages) {
+      navButtons.push({
+        type: "button",
+        style: "primary",
+        action: {
+          type: "message",
+          label: "下一頁",
+          text: `${listCommand} ${nextPage}`,
+        },
+      });
+    }
+
+    bubbles.push({
+      type: "bubble",
+      size: "micro",
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: [
+          {
+            type: "text",
+            text: "曲目清單分頁",
+            weight: "bold",
+            size: "md",
+            wrap: true,
+          },
+          {
+            type: "text",
+            text: `第 ${currentPage} / ${totalPages} 頁`,
+            size: "sm",
+            color: "#64748b",
+          },
+          {
+            type: "text",
+            text: "請使用下方按鈕切換頁面。",
+            size: "xs",
+            color: "#64748b",
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: navButtons,
+      },
+    });
+  }
+
+  return {
+    type: "flex",
+    altText: `${title}（第 ${currentPage} / ${totalPages} 頁）`,
+    contents: {
+      type: "carousel",
+      contents: bubbles,
     },
     quickReply: makeQuickReply(),
   };

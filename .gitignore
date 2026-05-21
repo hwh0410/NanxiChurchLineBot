@@ -1,1 +1,5 @@
-index.backup.*.js
+node_modules/
+.DS_Store
+index.backup*.js
+.env
+.env.local

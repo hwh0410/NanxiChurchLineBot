@@ -1,6 +1,6 @@
 const express = require("express");
 const line = require("@line/bot-sdk");
-const axios = require("axios");
+const { requireGoogleAdmin } = require("./services/googleAdminAuth");
 const {
   getCachedData,
   refreshCache,
@@ -16,19 +16,17 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new line.messagingApi.MessagingApiClient({
-  channelAccessToken: config.channelAccessToken,
-});
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+// Staging services can disable the LINE webhook entirely so no production
+// LINE channel credentials are required for Google admin / Sheets tests.
 const PLATFORM_URL =
   process.env.PLATFORM_URL || "https://hwh0410.github.io/NanxiChurchChoir/";
+const LINE_WEBHOOK_ENABLED = process.env.LINE_WEBHOOK_ENABLED !== "false";
+const client = LINE_WEBHOOK_ENABLED
+  ? new line.messagingApi.MessagingApiClient({
+      channelAccessToken: config.channelAccessToken,
+    })
+  : null;
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-};
 
 app.use("/api", express.json({ limit: "5mb" }));
 
@@ -99,6 +97,7 @@ app.get("/cache-info", (req, res) => {
 });
 
 app.post("/refresh-cache", async (req, res) => {
+  if (!(await requireGoogleAdmin(req, res))) return;
   try {
     const data = await refreshCache();
 
@@ -123,6 +122,11 @@ app.post("/refresh-cache", async (req, res) => {
 });
 
 
+app.get("/api/admin/me", async (req, res) => {
+  const identity = await requireGoogleAdmin(req, res);
+  if (identity) res.json({ status: "ok", email: identity.email });
+});
+
 app.get("/api/data", async (req, res) => {
   try {
     const data = await getCachedData();
@@ -144,7 +148,7 @@ app.get("/api/data", async (req, res) => {
 
 app.post("/api/data", async (req, res) => {
   try {
-    if (!(await requireAdminApiToken(req, res))) {
+    if (!(await requireGoogleAdmin(req, res))) {
       return;
     }
 
@@ -180,6 +184,7 @@ app.post("/api/data", async (req, res) => {
   }
 });
 
+if (LINE_WEBHOOK_ENABLED) {
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
     const events = req.body.events || [];
@@ -203,6 +208,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
     res.status(200).send("OK");
   }
 });
+}
 
 async function handleTextMessage(text) {
   if (text === "選單" || text === "menu" || text === "幫助") {
@@ -276,53 +282,6 @@ async function handleTextMessage(text) {
   return [makeHelpMessage()];
 }
 
-
-async function requireAdminApiToken(req, res) {
-  const expectedToken = process.env.ADMIN_API_TOKEN || "";
-  const adminEmails = (process.env.ADMIN_EMAILS || "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-
-  const xAdminToken = req.headers["x-admin-token"];
-  const authHeader = req.headers["authorization"] || "";
-  const bearerToken = authHeader.replace(/^Bearer\s+/i, "");
-
-  if (expectedToken && xAdminToken === expectedToken) {
-    return true;
-  }
-
-  if (bearerToken) {
-    try {
-      const response = await axios.get(`${SUPABASE_URL}/auth/v1/user`, {
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${bearerToken}`,
-        },
-      });
-
-      const email = String(response.data?.email || "").toLowerCase();
-
-      if (!adminEmails.length || adminEmails.includes(email)) {
-        return true;
-      }
-
-      res.status(403).json({
-        status: "error",
-        message: "Forbidden: this account is not in ADMIN_EMAILS.",
-      });
-      return false;
-    } catch (error) {
-      console.error("Supabase auth verification failed:", error.response?.data || error.message);
-    }
-  }
-
-  res.status(401).json({
-    status: "error",
-    message: "Unauthorized.",
-  });
-  return false;
-}
 
 function makeText(text) {
   return {
@@ -414,222 +373,44 @@ function parsePageNumber(value) {
 }
 
 async function getAllSongs() {
-  try {
-    const data = await getCachedData();
-
-    return [...data.songs]
-      .sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "zh-Hant"))
-      .map((song) => ({
-        ...song,
-        resources: data.resourcesBySongId.get(song.id) || [],
-      }));
-  } catch (error) {
-    console.error("Google Sheet getAllSongs failed, fallback to Supabase:", error.message);
-    return getAllSongsFromSupabase();
-  }
+  const data = await getCachedData();
+  return [...data.songs]
+    .sort((a,b) => String(a.title || "").localeCompare(String(b.title || ""), "zh-Hant"))
+    .map(song => ({...song, resources: data.resourcesBySongId.get(song.id) || []}));
 }
-
-async function getAllSongsFromSupabase() {
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/songs?select=*&order=created_at.desc`,
-    { headers }
-  );
-
-  const songs = response.data || [];
-  const result = [];
-
-  for (const song of songs) {
-    const resources = await getResourcesBySongIdFromSupabase(song.id);
-    result.push({
-      ...song,
-      resources,
-    });
-  }
-
-  return result;
-}
-
-
 async function getScheduleByOffset(offsetWeeks) {
-  try {
-    const data = await getCachedData();
-    const today = new Date();
-    const start = new Date(today);
-
-    start.setDate(today.getDate() + offsetWeeks * 7);
-
-    const startDate = start.toISOString().slice(0, 10);
-
-    const schedule = data.schedulesWithSongs.find(
-      (item) => String(item.date || "") >= startDate
-    );
-
-    return schedule || null;
-  } catch (error) {
-    console.error("Google Sheet getScheduleByOffset failed, fallback to Supabase:", error.message);
-    return getScheduleByOffsetFromSupabase(offsetWeeks);
-  }
+  const data = await getCachedData();
+  const now = new Date();
+  const taiwan = new Date(now.getTime() + 8 * 3600000);
+  const day = taiwan.getUTCDay();
+  const start = new Date(Date.UTC(taiwan.getUTCFullYear(), taiwan.getUTCMonth(), taiwan.getUTCDate() - day + offsetWeeks * 7));
+  const end = new Date(start.getTime() + 7 * 86400000);
+  const from = start.toISOString().slice(0,10);
+  const until = end.toISOString().slice(0,10);
+  return data.schedulesWithSongs.find(item => String(item.date || "") >= from && String(item.date || "") < until) || null;
 }
-
-async function getSongById(songId) {
-  try {
-    const data = await getCachedData();
-    return data.songsById.get(songId) || null;
-  } catch (error) {
-    console.error("Google Sheet getSongById failed, fallback to Supabase:", error.message);
-    return getSongByIdFromSupabase(songId);
-  }
+async function getSongById(id) {
+  return (await getCachedData()).songsById.get(id) || null;
 }
-
-async function getResourcesBySongId(songId) {
-  try {
-    const data = await getCachedData();
-    return data.resourcesBySongId.get(songId) || [];
-  } catch (error) {
-    console.error("Google Sheet getResourcesBySongId failed, fallback to Supabase:", error.message);
-    return getResourcesBySongIdFromSupabase(songId);
-  }
+async function getResourcesBySongId(id) {
+  return (await getCachedData()).resourcesBySongId.get(id) || [];
 }
-
 async function searchSongs(keyword) {
-  try {
-    if (!keyword) return [];
-
-    const data = await getCachedData();
-    const normalizedKeyword = keyword.toLowerCase();
-
-    return data.songs
-      .filter((song) => String(song.title || "").toLowerCase().includes(normalizedKeyword))
-      .slice(0, 5)
-      .map((song) => ({
-        ...song,
-        resources: data.resourcesBySongId.get(song.id) || [],
-      }));
-  } catch (error) {
-    console.error("Google Sheet searchSongs failed, fallback to Supabase:", error.message);
-    return searchSongsFromSupabase(keyword);
-  }
-}
-
-async function getArchiveVideos() {
-  try {
-    const data = await getCachedData();
-
-    return [...data.archiveVideos]
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-      .slice(0, 10);
-  } catch (error) {
-    console.error("Google Sheet getArchiveVideos failed, fallback to Supabase:", error.message);
-    return getArchiveVideosFromSupabase();
-  }
-}
-
-async function searchArchiveVideos(keyword) {
-  try {
-    if (!keyword) return [];
-
-    const data = await getCachedData();
-    const normalizedKeyword = keyword.toLowerCase();
-
-    return data.archiveVideos
-      .filter((video) =>
-        String(video.title || "").toLowerCase().includes(normalizedKeyword) ||
-        String(video.description || "").toLowerCase().includes(normalizedKeyword) ||
-        String(video.tags || "").toLowerCase().includes(normalizedKeyword)
-      )
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-      .slice(0, 10);
-  } catch (error) {
-    console.error("Google Sheet searchArchiveVideos failed, fallback to Supabase:", error.message);
-    return searchArchiveVideosFromSupabase(keyword);
-  }
-}
-
-async function getScheduleByOffsetFromSupabase(offsetWeeks) {
-  const today = new Date();
-  const start = new Date(today);
-  start.setDate(today.getDate() + offsetWeeks * 7);
-
-  const startDate = start.toISOString().slice(0, 10);
-
-  const scheduleResponse = await axios.get(
-    `${SUPABASE_URL}/rest/v1/schedules?select=*&date=gte.${startDate}&order=date.asc&limit=1`,
-    { headers }
-  );
-
-  const schedule = (scheduleResponse.data || [])[0];
-
-  if (!schedule) {
-    return null;
-  }
-
-  const scheduleSongsResponse = await axios.get(
-    `${SUPABASE_URL}/rest/v1/schedule_songs?select=*&schedule_id=eq.${schedule.id}&order=sort_order.asc`,
-    { headers }
-  );
-
-  const scheduleSongs = scheduleSongsResponse.data || [];
-
-  const songsWithResources = [];
-
-  for (const item of scheduleSongs) {
-    const song = await getSongByIdFromSupabase(item.song_id);
-
-    if (song) {
-      const resources = await getResourcesBySongIdFromSupabase(song.id);
-      songsWithResources.push({
-        usageType: item.usage_type || "曲目",
-        song,
-        resources,
-      });
-    }
-  }
-
-  return {
-    ...schedule,
-    songs: songsWithResources,
-  };
-}
-
-async function getSongByIdFromSupabase(songId) {
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/songs?select=*&id=eq.${songId}&limit=1`,
-    { headers }
-  );
-
-  return (response.data || [])[0] || null;
-}
-
-async function getResourcesBySongIdFromSupabase(songId) {
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/song_resources?select=*&song_id=eq.${songId}&order=created_at.asc`,
-    { headers }
-  );
-
-  return response.data || [];
-}
-
-async function searchSongsFromSupabase(keyword) {
   if (!keyword) return [];
-
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/songs?select=*&title=ilike.*${encodeURIComponent(keyword)}*&order=created_at.desc&limit=5`,
-    { headers }
-  );
-
-  const songs = response.data || [];
-
-  const result = [];
-
-  for (const song of songs) {
-    const resources = await getResourcesBySongIdFromSupabase(song.id);
-    result.push({
-      ...song,
-      resources,
-    });
-  }
-
-  return result;
+  const data = await getCachedData();
+  return data.songs.filter(song => String(song.title || "").toLowerCase().includes(keyword.toLowerCase()))
+    .slice(0,5).map(song => ({...song, resources:data.resourcesBySongId.get(song.id) || []}));
+}
+async function getArchiveVideos() {
+  const data = await getCachedData();
+  return [...data.archiveVideos].sort((a,b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0,10);
+}
+async function searchArchiveVideos(keyword) {
+  if (!keyword) return [];
+  const data = await getCachedData();
+  return data.archiveVideos.filter(video => [video.title,video.description,video.tags]
+    .some(value => String(value || "").toLowerCase().includes(keyword.toLowerCase())))
+    .sort((a,b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0,10);
 }
 
 function makeScheduleFlex(schedule, title) {
@@ -1172,28 +953,6 @@ function makeSongResourceFlex(song) {
   };
 }
 
-async function getArchiveVideosFromSupabase() {
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/archive_videos?select=*&order=date.desc&limit=10`,
-    { headers }
-  );
-
-  return response.data || [];
-}
-
-async function searchArchiveVideosFromSupabase(keyword) {
-  if (!keyword) return [];
-
-  const response = await axios.get(
-    `${SUPABASE_URL}/rest/v1/archive_videos?select=*&title=ilike.*${encodeURIComponent(
-      keyword
-    )}*&order=date.desc&limit=10`,
-    { headers }
-  );
-
-  return response.data || [];
-}
-
 function makeArchiveVideosFlex(videos, title) {
   if (!videos.length) {
     return makeText(`目前找不到「${title}」相關影片。`);
@@ -1279,6 +1038,6 @@ app.listen(PORT, () => {
     })
     .catch((error) => {
       console.error("Google Sheet cache load failed on startup:", error.message);
-      console.error("Bot will fallback to Supabase when needed.");
+      console.error("Bot data requests may fail until Google Sheets access is restored.");
     });
 });

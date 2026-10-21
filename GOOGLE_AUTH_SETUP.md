@@ -7,9 +7,11 @@
 3. 若 OAuth 應用程式仍處於「測試中」，需將每位管理員加入 Google OAuth 測試使用者名單；正式發佈則依 Google 政策完成必要設定。
 4. Google Cloud 專案需啟用 **Google Sheets API**，後端沿用原先讀取詩班資料的 Google Service Account。
 
-## 建立獨立的私人管理員 Google Sheet
+## 管理員 Google Sheet
 
-建立一份新的、**不要公開分享**的試算表，例如「NanxiChurchAdmins」。新增工作表，精確命名為 `admin_users`。
+可直接沿用現有的 `NanxiChurchChoir_Database`，前提是**只有受信任的管理員能編輯整份試算表**，其他團員只能透過網站或 LINE Bot 查詢；若其他團員也能編輯，請使用獨立、受限制的試算表存放授權名單。
+
+在既有試算表中新增工作表，精確命名為 `admin_users`。
 
 第一列欄位必須為：
 
@@ -24,9 +26,7 @@
 - `google_sub`：選填。填寫 Google 帳號的穩定唯一 ID，可額外防止 Email 重新指派風險。
 - **請不要設定密碼欄位**，也不要在試算表儲存密碼。
 
-將此私人試算表分享給 Render 目前使用的 Google Service Account Email，權限為「檢視者」即可。**不要分享給全部詩班團員**。Service Account 仍需另外保有原本詩班資料 Google Sheet 的編輯權。
-
-從試算表網址中取出 `/d/` 後面的 Spreadsheet ID。
+沿用原本能讀寫詩班資料的 Google Service Account，不需新增金鑰。若管理員名單與資料庫使用同一份試算表，直接設定 `ADMIN_SHEET_ID` 與現有 `GOOGLE_SHEET_ID` 相同即可。請勿將整份試算表公開分享。
 
 ## Render 環境變數
 

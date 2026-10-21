@@ -1,0 +1,18 @@
+name: Verify LINE Bot backend
+on:
+  pull_request:
+  push:
+    branches: [feature/google-signin-admin-sheet]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node --check index.js
+      - run: node --check services/googleAdminAuth.js
+      - run: node --test tests/*.test.js

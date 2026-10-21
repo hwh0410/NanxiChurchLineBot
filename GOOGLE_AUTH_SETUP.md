@@ -47,7 +47,11 @@ ADMIN_SHEET_ID=私人管理員名單Spreadsheet_ID
 
 ## 驗證與切換
 
-1. 先部署 Render **測試服務**（指向本 PR 分支），測試服務使用同一個私人管理員名單與原資料表的**副本**，避免影響正式資料。
+1. 先部署 Render **測試服務**（指向本 PR 分支 `feature/google-signin-admin-sheet`），使用原資料表的**副本**，避免影響正式資料。測試副本中也要有 `admin_users` 頁籤；測試服務設定 `GOOGLE_SHEET_ID` 與 `ADMIN_SHEET_ID` 為測試副本的相同 ID。
+   - Render 新增 Web Service，Build Command 為 `npm ci`，Start Command 為 `npm start`。
+   - 測試服務獨立設定 `GOOGLE_SERVICE_ACCOUNT_JSON`、`GOOGLE_CLIENT_ID`、`GOOGLE_SHEET_ID`、`ADMIN_SHEET_ID`。
+   - 測試服務**額外設定** `LINE_WEBHOOK_ENABLED=false`，關閉 LINE webhook，因此不需要複製正式 LINE Channel Token / Secret，也不要將 LINE Developers webhook URL 指向測試服務。
+   - 請勿把正式 Render 服務的環境變數批次直接複製到測試服務，避免測試服務誤連正式資料庫。
 2. `GET /health` 確認後端正常；`GET /api/data` 確認詩班測試資料可讀。
 3. `GET /api/admin/me` 未登入需回傳 HTTP 401；未授權 Google 帳號回傳 403；授權帳號應回傳 200。
 4. `POST /api/data` 未登入或未授權應拒絕；授權帳號可修改**測試資料**。

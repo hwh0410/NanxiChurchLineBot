@@ -18,6 +18,8 @@ const config = {
 
 // Staging services can disable the LINE webhook entirely so no production
 // LINE channel credentials are required for Google admin / Sheets tests.
+const PLATFORM_URL =
+  process.env.PLATFORM_URL || "https://hwh0410.github.io/NanxiChurchChoir/";
 const LINE_WEBHOOK_ENABLED = process.env.LINE_WEBHOOK_ENABLED !== "false";
 const client = LINE_WEBHOOK_ENABLED
   ? new line.messagingApi.MessagingApiClient({
@@ -1036,6 +1038,6 @@ app.listen(PORT, () => {
     })
     .catch((error) => {
       console.error("Google Sheet cache load failed on startup:", error.message);
-      console.error("Bot will fallback to Supabase when needed.");
+      console.error("Bot data requests may fail until Google Sheets access is restored.");
     });
 });

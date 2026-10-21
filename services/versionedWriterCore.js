@@ -46,6 +46,20 @@ function buildAtomicUpdateRequests({ sheetNames, tableColumns, tables, originalR
   }
   return requests;
 }
+function assertExpectedVersion(expectedVersion, currentVersion) {
+  if (!expectedVersion || !/^[a-f0-9]{64}$/.test(expectedVersion)) {
+    const error = new Error("儲存時必須提供有效的資料版本，請重新載入。");
+    error.code = "VERSION_REQUIRED";
+    throw error;
+  }
+  if (expectedVersion !== currentVersion) {
+    const error = new Error("雲端資料已由其他管理員更新，請先重新載入再儲存。");
+    error.code = "DATA_CONFLICT";
+    error.currentVersion = currentVersion;
+    throw error;
+  }
+}
+
 function makeSerializedQueue() {
   let previous = Promise.resolve();
   return function enqueue(task) {
@@ -54,4 +68,4 @@ function makeSerializedQueue() {
     return current;
   };
 }
-module.exports = { computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue };
+module.exports = { computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue, assertExpectedVersion };

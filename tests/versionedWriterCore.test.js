@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue
+  computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue, assertExpectedVersion
 } = require("../services/versionedWriterCore");
 
 test("revision is stable against object key order, but changes when a song changes", () => {
@@ -73,4 +73,17 @@ test("concurrent writers are serialized; a rejected save does not deadlock later
   await assert.rejects(first, /failure/);
   assert.equal(await second, 2);
   assert.deepEqual(sequence, ["first-start", "first-end", "second"]);
+});
+
+test("two editors: a stale revision is rejected (409), invalid revision requires reload (428)", () => {
+  const original = computeDataVersion({ schedules: [] });
+  const newer = computeDataVersion({ schedules: [{ id: "new" }] });
+  assert.notEqual(original, newer);
+  assert.equal(assertExpectedVersion(newer, newer), undefined);
+  assert.throws(() => assertExpectedVersion(original, newer), (error) =>
+    error.code === "DATA_CONFLICT" && error.currentVersion === newer
+  );
+  assert.throws(() => assertExpectedVersion(undefined, newer), (error) =>
+    error.code === "VERSION_REQUIRED"
+  );
 });

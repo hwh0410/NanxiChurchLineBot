@@ -3,7 +3,7 @@ const {
   getSheetsClient, rowsToObjects, normalizeData, normalizedToAppData,
   appDataToTables, refreshCache,
 } = require("./googleSheetStore");
-const { computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue } =
+const { computeDataVersion, buildAtomicUpdateRequests, makeSerializedQueue, assertExpectedVersion } =
   require("./versionedWriterCore");
 
 const enqueueWrite = makeSerializedQueue();
@@ -34,26 +34,12 @@ async function getVersionedAppData() {
   return readLiveSnapshot(sheets);
 }
 
-function revisionConflict(currentVersion) {
-  const error = new Error("雲端資料已由其他管理員更新，請先重新載入再儲存。");
-  error.code = "DATA_CONFLICT";
-  error.currentVersion = currentVersion;
-  return error;
-}
-
 async function saveVersionedAppData(data, { expectedVersion, requireVersion = true } = {}) {
   return enqueueWrite(async () => {
     // Keep legacy and v2 writes in a single process-level queue.
-    if (requireVersion && (!expectedVersion || !/^[a-f0-9]{64}$/.test(expectedVersion))) {
-      const error = new Error("儲存時必須提供有效的資料版本，請重新載入。");
-      error.code = "VERSION_REQUIRED";
-      throw error;
-    }
     const sheets = await getSheetsClient();
     const live = await readLiveSnapshot(sheets);
-    if (requireVersion && expectedVersion !== live.version) {
-      throw revisionConflict(live.version);
-    }
+    if (requireVersion) assertExpectedVersion(expectedVersion, live.version);
     const meta = await sheets.spreadsheets.get({
       spreadsheetId: SHEET_ID,
       fields: "sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)))",

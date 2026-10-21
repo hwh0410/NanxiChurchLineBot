@@ -16,9 +16,14 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new line.messagingApi.MessagingApiClient({
-  channelAccessToken: config.channelAccessToken,
-});
+// Staging services can disable the LINE webhook entirely so no production
+// LINE channel credentials are required for Google admin / Sheets tests.
+const LINE_WEBHOOK_ENABLED = process.env.LINE_WEBHOOK_ENABLED !== "false";
+const client = LINE_WEBHOOK_ENABLED
+  ? new line.messagingApi.MessagingApiClient({
+      channelAccessToken: config.channelAccessToken,
+    })
+  : null;
 
 
 app.use("/api", express.json({ limit: "5mb" }));
@@ -177,6 +182,7 @@ app.post("/api/data", async (req, res) => {
   }
 });
 
+if (LINE_WEBHOOK_ENABLED) {
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
     const events = req.body.events || [];
@@ -200,6 +206,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
     res.status(200).send("OK");
   }
 });
+}
 
 async function handleTextMessage(text) {
   if (text === "選單" || text === "menu" || text === "幫助") {

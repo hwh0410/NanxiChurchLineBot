@@ -199,6 +199,15 @@ app.post("/api/data", async (req, res) => {
     if (!(await requireGoogleAdmin(req, res))) {
       return;
     }
+    // Rollout switch: once all admin clients use /api/data/v2,
+    // reject the old blind-write endpoint to prevent stale overwrites.
+    if (process.env.REQUIRE_VERSIONED_WRITES === "true") {
+      res.status(428).json({
+        status: "error", code: "VERSION_REQUIRED",
+        message: "此版管理介面已停用，請重新整理網站後再儲存。",
+      });
+      return;
+    }
 
     if (!req.body || typeof req.body !== "object") {
       res.status(400).json({

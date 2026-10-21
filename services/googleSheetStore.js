@@ -393,6 +393,7 @@ function normalizedToAppData(normalized) {
 }
 
 module.exports = {
+  getSheetsClient,
   loadAllDataFromSheet,
   getCachedData,
   refreshCache,

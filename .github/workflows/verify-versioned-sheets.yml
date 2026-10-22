@@ -1,0 +1,23 @@
+name: Verify versioned Sheets writes
+on:
+  pull_request:
+  push:
+    branches: [feature/atomic-versioned-sheets-v2]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check backend syntax
+        run: |
+          node --check index.js
+          node --check services/versionedDataStore.js
+          node --check services/versionedWriterCore.js
+      - name: Run backend unit tests (no live Sheets writes)
+        run: node --test tests/*.test.js

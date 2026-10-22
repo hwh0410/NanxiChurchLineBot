@@ -5,9 +5,9 @@ const {
   getCachedData,
   refreshCache,
   getCacheInfo,
-  saveAppDataToSheet,
   normalizedToAppData,
 } = require("./services/googleSheetStore");
+const { getVersionedAppData, saveVersionedAppData } = require("./services/versionedDataStore");
 
 const app = express();
 
@@ -127,6 +127,54 @@ app.get("/api/admin/me", async (req, res) => {
   if (identity) res.json({ status: "ok", email: identity.email });
 });
 
+// V2 guarantees optimistic concurrency for clients that send a data version.
+// V1 remains compatible with the already-published choir site during rollout.
+app.get("/api/data/v2", async (req, res) => {
+  try {
+    const snapshot = await getVersionedAppData();
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      status: "ok", data: snapshot.data, version: snapshot.version,
+    });
+  } catch (error) {
+    console.error("GET /api/data/v2 error:", error);
+    res.status(500).json({ status: "error", message: "無法讀取最新試算表資料。" });
+  }
+});
+
+app.post("/api/data/v2", async (req, res) => {
+  if (!(await requireGoogleAdmin(req, res))) return;
+  if (!req.body || typeof req.body !== "object" ||
+      !req.body.data || typeof req.body.data !== "object") {
+    res.status(400).json({ status: "error", message: "請提供儲存資料及版本資訊。" });
+    return;
+  }
+  try {
+    const result = await saveVersionedAppData(req.body.data, {
+      expectedVersion: req.body.version,
+      requireVersion: true,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({ status: "ok", ...result });
+  } catch (error) {
+    if (error.code === "DATA_CONFLICT") {
+      res.status(409).json({
+        status: "error", code: error.code, message: error.message,
+        currentVersion: error.currentVersion,
+      });
+      return;
+    }
+    if (error.code === "VERSION_REQUIRED") {
+      res.status(428).json({ status: "error", code: error.code, message: error.message });
+      return;
+    }
+    console.error("POST /api/data/v2 error:", error);
+    res.status(500).json({
+      status: "error", message: "資料儲存失敗，請重新讀取並確認內容。",
+    });
+  }
+});
+
 app.get("/api/data", async (req, res) => {
   try {
     const data = await getCachedData();
@@ -151,6 +199,15 @@ app.post("/api/data", async (req, res) => {
     if (!(await requireGoogleAdmin(req, res))) {
       return;
     }
+    // Rollout switch: once all admin clients use /api/data/v2,
+    // reject the old blind-write endpoint to prevent stale overwrites.
+    if (process.env.REQUIRE_VERSIONED_WRITES === "true") {
+      res.status(428).json({
+        status: "error", code: "VERSION_REQUIRED",
+        message: "此版管理介面已停用，請重新整理網站後再儲存。",
+      });
+      return;
+    }
 
     if (!req.body || typeof req.body !== "object") {
       res.status(400).json({
@@ -160,21 +217,11 @@ app.post("/api/data", async (req, res) => {
       return;
     }
 
-    const savedData = await saveAppDataToSheet(req.body);
-    const appData = normalizedToAppData(savedData);
-
-    res.status(200).json({
-      status: "ok",
-      cache: getCacheInfo(),
-      counts: {
-        schedules: savedData.schedules.length,
-        scheduleSongs: savedData.scheduleSongs.length,
-        songs: savedData.songs.length,
-        songResources: savedData.songResources.length,
-        archiveVideos: savedData.archiveVideos.length,
-      },
-      data: appData,
-    });
+    // Compatibility endpoint: legacy frontend does not yet send a version.
+    // Reuse the same atomic write + process queue; once all clients have
+    // migrated, this unversioned endpoint should require a revision as well.
+    const result = await saveVersionedAppData(req.body, { requireVersion: false });
+    res.status(200).json({ status: "ok", ...result });
   } catch (error) {
     console.error("POST /api/data error:", error);
     res.status(500).json({

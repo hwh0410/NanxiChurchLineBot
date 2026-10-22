@@ -5,6 +5,19 @@ const DEFAULT_SHEET_ID = "14_073x7K5uy9sbsdKSWKzmpqXJct9l1Bz1JviKOYoaA";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
 
+// Fail closed in staging: never silently use the production default Sheet.
+if (process.env.STAGING_MODE === "true") {
+  if (!process.env.GOOGLE_SHEET_ID || SHEET_ID === DEFAULT_SHEET_ID) {
+    throw new Error("STAGING_MODE requires a separate GOOGLE_SHEET_ID, not the production default.");
+  }
+  if (process.env.LINE_WEBHOOK_ENABLED !== "false") {
+    throw new Error("STAGING_MODE requires LINE_WEBHOOK_ENABLED=false.");
+  }
+  if (!process.env.ADMIN_SHEET_ID) {
+    throw new Error("STAGING_MODE requires an explicitly configured ADMIN_SHEET_ID.");
+  }
+}
+
 const SERVICE_ACCOUNT_PATH =
   process.env.GOOGLE_APPLICATION_CREDENTIALS ||
   ".secrets/google-service-account.json";
